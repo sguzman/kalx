@@ -31,17 +31,17 @@ pub struct SafetyArgs {
 #[derive(Debug, Parser)]
 #[command(name = "kalx", version, about = "Kalshi exchange CLI")]
 pub struct Cli {
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub config: Option<String>,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub env_file: Option<String>,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub profile: Option<String>,
-    #[arg(long, value_enum, default_value = "table")]
+    #[arg(long, value_enum, default_value = "table", global = true)]
     pub output: OutputFormat,
-    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub log_json: bool,
     #[command(subcommand)]
     pub command: Commands,
