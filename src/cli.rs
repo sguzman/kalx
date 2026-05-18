@@ -61,6 +61,10 @@ pub enum Commands {
         #[command(subcommand)]
         command: AuthCommands,
     },
+    Account {
+        #[command(subcommand)]
+        command: AccountCommands,
+    },
     Exchange {
         #[command(subcommand)]
         command: ExchangeCommands,
@@ -118,6 +122,12 @@ pub enum ConfigCommands {
 pub enum AuthCommands {
     Check,
     Keys,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AccountCommands {
+    Limits,
+    EndpointCosts,
 }
 
 #[derive(Debug, Subcommand)]

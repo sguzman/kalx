@@ -11,6 +11,33 @@ pub struct AuthSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountLimitsResponse {
+    pub usage_tier: String,
+    pub read: RateLimitBucket,
+    pub write: RateLimitBucket,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitBucket {
+    pub refill_rate: u32,
+    pub bucket_capacity: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointCostsResponse {
+    pub default_cost: u32,
+    #[serde(default)]
+    pub endpoint_costs: Vec<EndpointCost>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointCost {
+    pub method: String,
+    pub path: String,
+    pub cost: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketsQuery {
     pub limit: Option<u32>,
     pub cursor: Option<String>,

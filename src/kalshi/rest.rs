@@ -82,6 +82,14 @@ impl KalshiClient {
         ])).await
     }
 
+    pub async fn get_account_limits(&self) -> Result<AccountLimitsResponse> {
+        self.authenticated_typed("/account/limits", &[]).await
+    }
+
+    pub async fn get_endpoint_costs(&self) -> Result<EndpointCostsResponse> {
+        self.authenticated_typed("/account/endpoint_costs", &[]).await
+    }
+
     pub async fn get_market(&self, ticker: &str) -> Result<MarketResponse> {
         self.public_typed(&format!("/markets/{ticker}"), &[]).await
     }

@@ -9,9 +9,9 @@ use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::{Generator, Shell, generate};
 use kalx::cli::{
-    AmendOrderArgs, ApiCommands, AuthCommands, Cli, Commands, ConfigCommands, CreateOrderArgs,
-    EventCommands, ExchangeCommands, ExportCommands, MarketCommands, OrderCommands, OutputFormat,
-    PaginationArgs, PortfolioCommands, SeriesCommands, WatchCommands,
+    AccountCommands, AmendOrderArgs, ApiCommands, AuthCommands, Cli, Commands, ConfigCommands,
+    CreateOrderArgs, EventCommands, ExchangeCommands, ExportCommands, MarketCommands,
+    OrderCommands, OutputFormat, PaginationArgs, PortfolioCommands, SeriesCommands, WatchCommands,
 };
 use kalx::config::AppConfig;
 use kalx::kalshi::{
@@ -41,6 +41,7 @@ async fn main() -> Result<()> {
         Commands::Doctor { auth_check } => run_doctor(&client, auth_check).await?,
         Commands::Config { command } => run_config_command(&config, command)?,
         Commands::Auth { command } => run_auth_command(&client, cli.output, command).await?,
+        Commands::Account { command } => run_account_command(&client, cli.output, command).await?,
         Commands::Exchange { command } => run_exchange_command(&client, cli.output, command).await?,
         Commands::Series { command } => run_series_command(&client, cli.output, command).await?,
         Commands::Events { command } => run_events_command(&client, cli.output, command).await?,
@@ -114,6 +115,15 @@ async fn run_auth_command(client: &KalshiClient, format: OutputFormat, command: 
         AuthCommands::Keys => {
             let value = client.authenticated_json(Method::GET, "/api_keys", &[], None).await?;
             emit_value(format, &value)
+        }
+    }
+}
+
+async fn run_account_command(client: &KalshiClient, format: OutputFormat, command: AccountCommands) -> Result<()> {
+    match command {
+        AccountCommands::Limits => emit_value(format, &serde_json::to_value(client.get_account_limits().await?)?),
+        AccountCommands::EndpointCosts => {
+            emit_value(format, &serde_json::to_value(client.get_endpoint_costs().await?)?)
         }
     }
 }
