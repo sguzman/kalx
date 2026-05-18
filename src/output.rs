@@ -1,9 +1,13 @@
+use std::io;
+
 use anyhow::Result;
 use comfy_table::{Cell, ContentArrangement, Table, presets::UTF8_FULL};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::kalshi::{
-    BalanceResponse, Event, Fill, Market, MarketOrderbookResponse, Order, Position, Series, Trade,
+    BalanceResponse, Candlestick, Event, Fill, Market, MarketOrderbookResponse, Order, Position,
+    Series, Settlement, Trade,
 };
 
 pub fn print_json<T: Serialize + ?Sized>(value: &T) -> Result<()> {
@@ -15,6 +19,15 @@ pub fn print_ndjson_values<T: Serialize>(values: &[T]) -> Result<()> {
     for value in values {
         println!("{}", serde_json::to_string(value)?);
     }
+    Ok(())
+}
+
+pub fn print_csv_records<T: Serialize>(values: &[T]) -> Result<()> {
+    let mut writer = csv::Writer::from_writer(io::stdout());
+    for value in values {
+        writer.serialize(value)?;
+    }
+    writer.flush()?;
     Ok(())
 }
 
@@ -38,13 +51,14 @@ pub fn print_table_markets(markets: &[Market]) -> Result<()> {
 
 pub fn print_table_events(events: &[Event]) -> Result<()> {
     let mut table = new_table();
-    table.set_header(["event", "series", "title", "category", "updated"]);
+    table.set_header(["event", "series", "title", "category", "status", "updated"]);
     for event in events {
         table.add_row([
             event.event_ticker.as_str(),
             event.series_ticker.as_deref().unwrap_or(""),
             event.title.as_deref().unwrap_or(""),
             event.category.as_deref().unwrap_or(""),
+            event.status.as_deref().unwrap_or(""),
             event.last_updated_ts.as_deref().unwrap_or(""),
         ]);
     }
@@ -70,13 +84,14 @@ pub fn print_table_series(series: &[Series]) -> Result<()> {
 
 pub fn print_table_trades(trades: &[Trade]) -> Result<()> {
     let mut table = new_table();
-    table.set_header(["trade id", "ticker", "yes price", "count", "created"]);
+    table.set_header(["trade id", "ticker", "yes price", "count", "side", "created"]);
     for trade in trades {
         table.add_row([
             trade.trade_id.as_deref().unwrap_or(""),
             trade.ticker.as_deref().unwrap_or(""),
             trade.yes_price_dollars.as_deref().unwrap_or(""),
             trade.count_fp.as_deref().unwrap_or(""),
+            trade.taker_side.as_deref().unwrap_or(""),
             trade.created_time.as_deref().unwrap_or(""),
         ]);
     }
@@ -90,7 +105,10 @@ pub fn print_table_fills(fills: &[Fill]) -> Result<()> {
     for fill in fills {
         table.add_row([
             fill.fill_id.as_deref().unwrap_or(""),
-            fill.market_ticker.as_deref().unwrap_or(""),
+            fill.market_ticker
+                .as_deref()
+                .or(fill.ticker.as_deref())
+                .unwrap_or(""),
             fill.side.as_deref().unwrap_or(""),
             fill.action.as_deref().unwrap_or(""),
             fill.yes_price_dollars.as_deref().unwrap_or(""),
@@ -104,13 +122,14 @@ pub fn print_table_fills(fills: &[Fill]) -> Result<()> {
 
 pub fn print_table_positions(positions: &[Position]) -> Result<()> {
     let mut table = new_table();
-    table.set_header(["ticker", "position", "fees paid", "market exposure"]);
+    table.set_header(["ticker", "position", "fees paid", "market exposure", "realized pnl"]);
     for position in positions {
         table.add_row([
             position.ticker.as_deref().unwrap_or(""),
             position.position.as_deref().unwrap_or(""),
             position.fees_paid.as_deref().unwrap_or(""),
             position.market_exposure.as_deref().unwrap_or(""),
+            position.realized_pnl_dollars.as_deref().unwrap_or(""),
         ]);
     }
     println!("{table}");
@@ -127,8 +146,28 @@ pub fn print_table_orders(orders: &[Order]) -> Result<()> {
             order.status.as_deref().unwrap_or(""),
             order.side.as_deref().unwrap_or(""),
             order.action.as_deref().unwrap_or(""),
-            order.yes_price_dollars.as_deref().unwrap_or(""),
+            order.yes_price_dollars
+                .as_deref()
+                .or(order.no_price_dollars.as_deref())
+                .unwrap_or(""),
             order.remaining_count_fp.as_deref().unwrap_or(""),
+        ]);
+    }
+    println!("{table}");
+    Ok(())
+}
+
+pub fn print_table_settlements(settlements: &[Settlement]) -> Result<()> {
+    let mut table = new_table();
+    table.set_header(["ticker", "event", "position", "settlement", "realized pnl", "settled"]);
+    for settlement in settlements {
+        table.add_row(vec![
+            Cell::new(settlement.ticker.as_deref().unwrap_or("")),
+            Cell::new(settlement.event_ticker.as_deref().unwrap_or("")),
+            Cell::new(settlement.position.map(|v| v.to_string()).unwrap_or_default()),
+            Cell::new(settlement.settlement_price_dollars.as_deref().unwrap_or("")),
+            Cell::new(settlement.realized_pnl_dollars.as_deref().unwrap_or("")),
+            Cell::new(settlement.settled_time.as_deref().unwrap_or("")),
         ]);
     }
     println!("{table}");
@@ -150,7 +189,6 @@ pub fn print_table_balance(balance: &BalanceResponse) -> Result<()> {
 pub fn print_table_orderbook(ticker: &str, orderbook: &MarketOrderbookResponse) -> Result<()> {
     let mut table = new_table();
     table.set_header(["ticker", "side", "price", "count"]);
-
     for level in &orderbook.orderbook_fp.yes_dollars {
         table.add_row([ticker, "yes", level.0.as_str(), level.1.as_str()]);
     }
@@ -161,10 +199,52 @@ pub fn print_table_orderbook(ticker: &str, orderbook: &MarketOrderbookResponse) 
     Ok(())
 }
 
+pub fn print_table_candles(candles: &[Candlestick]) -> Result<()> {
+    let mut table = new_table();
+    table.set_header(["end_ts", "price close", "yes bid close", "yes ask close", "volume"]);
+    for candle in candles {
+        table.add_row([
+            candle.end_period_ts.map(|v| v.to_string()).unwrap_or_default(),
+            candle
+                .price
+                .as_ref()
+                .and_then(|price| price.close_dollars.clone())
+                .unwrap_or_default(),
+            candle
+                .yes_bid
+                .as_ref()
+                .and_then(|price| price.close_dollars.clone())
+                .unwrap_or_default(),
+            candle
+                .yes_ask
+                .as_ref()
+                .and_then(|price| price.close_dollars.clone())
+                .unwrap_or_default(),
+            candle.volume_fp.clone().unwrap_or_default(),
+        ]);
+    }
+    println!("{table}");
+    Ok(())
+}
+
+pub fn print_value_csv(value: &Value) -> Result<()> {
+    let mut writer = csv::Writer::from_writer(io::stdout());
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                writer.serialize(item)?;
+            }
+        }
+        other => {
+            writer.serialize(other)?;
+        }
+    }
+    writer.flush()?;
+    Ok(())
+}
+
 fn new_table() -> Table {
     let mut table = Table::new();
-    table
-        .load_preset(UTF8_FULL)
-        .set_content_arrangement(ContentArrangement::Dynamic);
+    table.load_preset(UTF8_FULL).set_content_arrangement(ContentArrangement::Dynamic);
     table
 }
