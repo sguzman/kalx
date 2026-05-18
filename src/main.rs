@@ -196,28 +196,7 @@ async fn run_events_command(client: &KalshiClient, format: OutputFormat, command
 async fn run_markets_command(client: &KalshiClient, format: OutputFormat, command: MarketCommands) -> Result<()> {
     match command {
         MarketCommands::Search { query, status, pagination } => {
-            let markets = fetch_all_markets(
-                client,
-                MarketsQuery {
-                    limit: Some(pagination.limit),
-                    cursor: pagination.cursor,
-                    event_ticker: None,
-                    series_ticker: None,
-                    min_created_ts: None,
-                    max_created_ts: None,
-                    min_updated_ts: None,
-                    min_close_ts: None,
-                    max_close_ts: None,
-                    min_settled_ts: None,
-                    max_settled_ts: None,
-                    status,
-                    tickers: None,
-                    mve_filter: None,
-                },
-                pagination.all,
-            ).await?;
-            let lowered = query.to_ascii_lowercase();
-            let filtered: Vec<Market> = markets.into_iter().filter(|m| m.matches(&lowered)).collect();
+            let filtered = search_markets(client, &query, status, pagination).await?;
             emit_markets(format, &filtered)
         }
         MarketCommands::List { status, event_ticker, series_ticker, pagination, min_created_ts, max_created_ts, min_updated_ts, min_close_ts, max_close_ts, tickers, mve_filter } => {
@@ -651,6 +630,160 @@ async fn fetch_all_fills(
         cursor = Some(next);
     }
     Ok(fills)
+}
+
+async fn search_markets(
+    client: &KalshiClient,
+    query: &str,
+    status: Option<String>,
+    pagination: PaginationArgs,
+) -> Result<Vec<Market>> {
+    let mut seen = HashSet::new();
+    let mut results = Vec::new();
+    let search_pages = if pagination.all { usize::MAX } else { 12 };
+
+    let series_response = client
+        .get_series_list(SeriesQuery {
+            category: None,
+            tags: None,
+            include_volume: false,
+            include_product_metadata: true,
+            min_updated_ts: None,
+        })
+        .await?;
+
+    for series in series_response.series {
+        if !series.matches(query) {
+            continue;
+        }
+
+        let series_markets = fetch_all_markets(
+            client,
+            MarketsQuery {
+                limit: Some(100),
+                cursor: None,
+                event_ticker: None,
+                series_ticker: Some(series.ticker),
+                min_created_ts: None,
+                max_created_ts: None,
+                min_updated_ts: None,
+                min_close_ts: None,
+                max_close_ts: None,
+                min_settled_ts: None,
+                max_settled_ts: None,
+                status: status.clone(),
+                tickers: None,
+                mve_filter: None,
+            },
+            true,
+        )
+        .await?;
+
+        for market in series_markets {
+            if seen.insert(market.ticker.clone()) {
+                results.push(market);
+                if results.len() >= pagination.limit as usize {
+                    return Ok(results);
+                }
+            }
+        }
+    }
+
+    let mut market_query = MarketsQuery {
+        limit: Some(100),
+        cursor: pagination.cursor.clone(),
+        event_ticker: None,
+        series_ticker: None,
+        min_created_ts: None,
+        max_created_ts: None,
+        min_updated_ts: None,
+        min_close_ts: None,
+        max_close_ts: None,
+        min_settled_ts: None,
+        max_settled_ts: None,
+        status: status.clone(),
+        tickers: None,
+        mve_filter: None,
+    };
+
+    let mut pages = 0usize;
+    loop {
+        let response = client.get_markets(market_query.clone()).await?;
+        let next = response.cursor.clone();
+        for market in response.markets {
+            if market.matches(query) && seen.insert(market.ticker.clone()) {
+                results.push(market);
+                if results.len() >= pagination.limit as usize {
+                    return Ok(results);
+                }
+            }
+        }
+
+        pages += 1;
+        if next.is_empty() || pages >= search_pages {
+            break;
+        }
+        market_query.cursor = Some(next);
+    }
+
+    let mut event_query = EventsQuery {
+        limit: 50,
+        cursor: None,
+        status: status.clone(),
+        series_ticker: None,
+        with_nested_markets: false,
+        with_milestones: false,
+        min_updated_ts: None,
+        min_close_ts: None,
+    };
+
+    let mut event_pages = 0usize;
+    loop {
+        let response = client.get_events(event_query.clone()).await?;
+        let next = response.cursor.clone();
+        for event in response.events {
+            if event.matches(query) {
+                let event_ticker = event.event_ticker.clone();
+                let event_markets = fetch_all_markets(
+                    client,
+                    MarketsQuery {
+                        limit: Some(100),
+                        cursor: None,
+                        event_ticker: Some(event_ticker),
+                        series_ticker: None,
+                        min_created_ts: None,
+                        max_created_ts: None,
+                        min_updated_ts: None,
+                        min_close_ts: None,
+                        max_close_ts: None,
+                        min_settled_ts: None,
+                        max_settled_ts: None,
+                        status: status.clone(),
+                        tickers: None,
+                        mve_filter: None,
+                    },
+                    true,
+                )
+                .await?;
+                for market in event_markets {
+                    if seen.insert(market.ticker.clone()) {
+                        results.push(market);
+                        if results.len() >= pagination.limit as usize {
+                            return Ok(results);
+                        }
+                    }
+                }
+            }
+        }
+
+        event_pages += 1;
+        if next.is_empty() || event_pages >= search_pages {
+            break;
+        }
+        event_query.cursor = Some(next);
+    }
+
+    Ok(results)
 }
 
 async fn watch_recent_open(

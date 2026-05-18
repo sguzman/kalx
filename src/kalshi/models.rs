@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,17 +290,45 @@ pub struct Market {
 
 impl Market {
     pub fn matches(&self, query: &str) -> bool {
-        [
+        fields_match(
+            &[
+                Some(self.ticker.as_str()),
+                self.event_ticker.as_deref(),
+                self.title.as_deref(),
+                self.subtitle.as_deref(),
+                self.yes_sub_title.as_deref(),
+                self.no_sub_title.as_deref(),
+            ],
+            query,
+        )
+    }
+}
+
+impl Event {
+    pub fn matches(&self, query: &str) -> bool {
+        fields_match(
+            &[
+                Some(self.event_ticker.as_str()),
+                self.series_ticker.as_deref(),
+                self.title.as_deref(),
+                self.sub_title.as_deref(),
+                self.category.as_deref(),
+            ],
+            query,
+        )
+    }
+}
+
+impl Series {
+    pub fn matches(&self, query: &str) -> bool {
+        let tag_refs = self.tags.iter().map(String::as_str);
+        let mut values = vec![
             Some(self.ticker.as_str()),
-            self.event_ticker.as_deref(),
             self.title.as_deref(),
-            self.subtitle.as_deref(),
-            self.yes_sub_title.as_deref(),
-            self.no_sub_title.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .any(|value| value.to_ascii_lowercase().contains(query))
+            self.category.as_deref(),
+        ];
+        values.extend(tag_refs.map(Some));
+        fields_match(&values, query)
     }
 }
 
@@ -323,10 +351,42 @@ pub struct Series {
     pub frequency: Option<String>,
     pub title: Option<String>,
     pub category: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_vec_or_default")]
     pub tags: Vec<String>,
     pub volume_fp: Option<String>,
     pub last_updated_ts: Option<String>,
+}
+
+fn fields_match(fields: &[Option<&str>], query: &str) -> bool {
+    let tokens = query_tokens(query);
+    if tokens.is_empty() {
+        return false;
+    }
+
+    let haystack = fields
+        .iter()
+        .flatten()
+        .map(|value| value.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    tokens.iter().all(|token| haystack.contains(token))
+}
+
+fn query_tokens(query: &str) -> Vec<String> {
+    query
+        .split_whitespace()
+        .map(|token| token.trim().to_ascii_lowercase())
+        .filter(|token| !token.is_empty())
+        .collect()
+}
+
+fn deserialize_vec_or_default<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Ok(Option::<Vec<T>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -338,6 +398,57 @@ pub struct Trade {
     pub no_price_dollars: Option<String>,
     pub taker_side: Option<String>,
     pub created_time: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Event, Market, Series};
+
+    #[test]
+    fn market_match_uses_multiple_fields_and_tokens() {
+        let market = Market {
+            ticker: "TEST-MKT".to_string(),
+            title: Some("Will Mexico City hit 30C?".to_string()),
+            ..Default::default()
+        };
+        assert!(market.matches("mexico city"));
+        assert!(market.matches("30c"));
+        assert!(!market.matches("canada"));
+    }
+
+    #[test]
+    fn series_and_event_match_cover_metadata() {
+        let series = Series {
+            ticker: "WORLD-SOCCER".to_string(),
+            title: Some("World Soccer".to_string()),
+            category: Some("Sports".to_string()),
+            tags: vec!["Mexico".to_string()],
+            ..Default::default()
+        };
+        let event = Event {
+            event_ticker: "MEX-ELECTION".to_string(),
+            series_ticker: Some("POLITICS".to_string()),
+            title: Some("Mexico Presidential Election".to_string()),
+            ..Default::default()
+        };
+
+        assert!(series.matches("mexico"));
+        assert!(event.matches("mexico election"));
+        assert!(!series.matches("rates"));
+        assert!(!event.matches("canada"));
+    }
+
+    #[test]
+    fn series_tags_accept_null() {
+        let series: Series = serde_json::from_value(json!({
+            "ticker": "TEST",
+            "tags": null
+        }))
+        .unwrap();
+        assert!(series.tags.is_empty());
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

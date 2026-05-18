@@ -1,11 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use chrono::Utc;
 use reqwest::{Method, StatusCode};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use tracing::debug;
+use tokio::time::sleep;
+use tracing::{debug, warn};
 
 use crate::config::AppConfig;
 use crate::error::KalxError;
@@ -301,35 +303,57 @@ impl KalshiClient {
             .context("failed to parse request url for signing")?
             .path()
             .to_string();
-        let mut request = self.http.request(method.clone(), &url).query(query);
+        let max_attempts = 4usize;
 
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
+        for attempt in 0..max_attempts {
+            let mut request = self.http.request(method.clone(), &url).query(query);
 
-        if require_auth {
-            let signer = self.signer.as_ref().ok_or(KalxError::MissingAuth)?;
-            let timestamp = Utc::now().timestamp_millis().to_string();
-            for (key, value) in signer.auth_headers(&timestamp, &method, &signed_path)? {
-                request = request.header(key, value);
+            if let Some(body) = body.clone() {
+                request = request.json(&body);
             }
+
+            if require_auth {
+                let signer = self.signer.as_ref().ok_or(KalxError::MissingAuth)?;
+                let timestamp = Utc::now().timestamp_millis().to_string();
+                for (key, value) in signer.auth_headers(&timestamp, &method, &signed_path)? {
+                    request = request.header(key, value);
+                }
+            }
+
+            debug!(method = %method, path, signed_path, query = ?query, auth = require_auth, attempt, "sending request");
+            let response = request.send().await.context("request failed")?;
+            let status = response.status();
+            let retry_after_ms = retry_after_ms(response.headers()).unwrap_or_else(|| 500 * (1u64 << attempt));
+            let body = response.text().await.context("failed to read response body")?;
+
+            if status == StatusCode::TOO_MANY_REQUESTS && attempt + 1 < max_attempts {
+                warn!(method = %method, path, attempt, retry_after_ms, "rate limited by Kalshi, retrying");
+                sleep(Duration::from_millis(retry_after_ms)).await;
+                continue;
+            }
+
+            if !status.is_success() {
+                return Err(http_error(status, &body));
+            }
+
+            return serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse response json from {path}"));
         }
 
-        debug!(method = %method, path, signed_path, query = ?query, auth = require_auth, "sending request");
-        let response = request.send().await.context("request failed")?;
-        let status = response.status();
-        let body = response.text().await.context("failed to read response body")?;
-
-        if !status.is_success() {
-            return Err(http_error(status, &body));
-        }
-
-        serde_json::from_str(&body).with_context(|| format!("failed to parse response json from {path}"))
+        Err(anyhow!("request retry loop exhausted for {path}"))
     }
 }
 
 fn http_error(status: StatusCode, body: &str) -> anyhow::Error {
     anyhow!("http {}: {}", status.as_u16(), body)
+}
+
+fn retry_after_ms(headers: &reqwest::header::HeaderMap) -> Option<u64> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(|seconds| seconds.saturating_mul(1000))
 }
 
 pub fn query_pairs<const N: usize>(pairs: [Option<(String, String)>; N]) -> Vec<(String, String)> {
@@ -362,7 +386,9 @@ pub fn split_path_and_query(path: &str) -> (String, Vec<(String, String)>) {
 
 #[cfg(test)]
 mod tests {
-    use super::split_path_and_query;
+    use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
+
+    use super::{retry_after_ms, split_path_and_query};
 
     #[test]
     fn splits_query_components() {
@@ -372,5 +398,12 @@ mod tests {
             ("limit".to_string(), "5".to_string()),
             ("status".to_string(), "open".to_string()),
         ]);
+    }
+
+    #[test]
+    fn parses_retry_after_seconds() {
+        let mut headers = HeaderMap::new();
+        headers.insert(RETRY_AFTER, HeaderValue::from_static("3"));
+        assert_eq!(retry_after_ms(&headers), Some(3000));
     }
 }
