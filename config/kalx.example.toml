@@ -1,0 +1,17 @@
+profile = "demo"
+
+[profiles.demo]
+rest_base_url = "https://external-api.demo.kalshi.co/trade-api/v2"
+ws_base_url = "wss://external-api-ws.demo.kalshi.co/trade-api/ws/v2"
+
+[profiles.prod]
+rest_base_url = "https://external-api.kalshi.com/trade-api/v2"
+ws_base_url = "wss://external-api-ws.kalshi.com/trade-api/ws/v2"
+
+[output]
+format = "table"
+
+[logging]
+level = "info"
+json = false
+

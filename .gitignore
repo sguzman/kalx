@@ -3,3 +3,9 @@ logs
 tmp
 .cache
 .env
+.env.*
+!.env.example
+*.key
+*.pem
+/private
+/secrets
