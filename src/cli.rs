@@ -256,6 +256,8 @@ pub enum MarketCommands {
         minutes: u32,
         #[arg(long, default_value_t = 100)]
         limit: u32,
+        #[arg(long)]
+        query: Option<String>,
     },
     WatchOpen {
         #[arg(long, default_value_t = 15)]
@@ -264,6 +266,8 @@ pub enum MarketCommands {
         limit: u32,
         #[arg(long)]
         once: bool,
+        #[arg(long)]
+        query: Option<String>,
     },
 }
 

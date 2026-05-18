@@ -272,7 +272,7 @@ async fn run_markets_command(client: &KalshiClient, format: OutputFormat, comman
             emit_trades(format, &trades)
         }
         MarketCommands::Watch { ticker } => run_watch_market(client, WatchKind::Market, Some(ticker)).await,
-        MarketCommands::RecentOpen { minutes, limit } => {
+        MarketCommands::RecentOpen { minutes, limit, query } => {
             let cutoff = Utc::now().timestamp() - i64::from(minutes) * 60;
             let markets = fetch_all_markets(
                 client,
@@ -294,9 +294,12 @@ async fn run_markets_command(client: &KalshiClient, format: OutputFormat, comman
                 },
                 true,
             ).await?;
-            emit_markets(format, &markets)
+            let filtered = filter_markets_by_query(markets, query.as_deref());
+            emit_markets(format, &filtered)
         }
-        MarketCommands::WatchOpen { interval_seconds, limit, once } => watch_recent_open(client, format, interval_seconds, limit, once).await,
+        MarketCommands::WatchOpen { interval_seconds, limit, once, query } => {
+            watch_recent_open(client, format, interval_seconds, limit, once, query.as_deref()).await
+        }
     }
 }
 
@@ -802,6 +805,7 @@ async fn watch_recent_open(
     interval_seconds: u64,
     limit: u32,
     once: bool,
+    query: Option<&str>,
 ) -> Result<()> {
     let mut seen = HashSet::new();
     loop {
@@ -826,6 +830,7 @@ async fn watch_recent_open(
             .markets
             .into_iter()
             .filter(|market| seen.insert(market.ticker.clone()))
+            .filter(|market| market_matches_query(market, query))
             .collect();
 
         if !newly_seen.is_empty() {
@@ -842,6 +847,17 @@ async fn watch_recent_open(
         io::stdout().flush().ok();
         tokio::time::sleep(Duration::from_secs(interval_seconds)).await;
     }
+}
+
+fn filter_markets_by_query(markets: Vec<Market>, query: Option<&str>) -> Vec<Market> {
+    markets
+        .into_iter()
+        .filter(|market| market_matches_query(market, query))
+        .collect()
+}
+
+fn market_matches_query(market: &Market, query: Option<&str>) -> bool {
+    query.is_none_or(|query| market.matches(query))
 }
 
 fn emit_markets(format: OutputFormat, markets: &[Market]) -> Result<()> {
