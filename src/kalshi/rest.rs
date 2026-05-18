@@ -297,6 +297,10 @@ impl KalshiClient {
         require_auth: bool,
     ) -> Result<Value> {
         let url = format!("{}{}", self.config.active_profile().rest_base_url, path);
+        let signed_path = reqwest::Url::parse(&url)
+            .context("failed to parse request url for signing")?
+            .path()
+            .to_string();
         let mut request = self.http.request(method.clone(), &url).query(query);
 
         if let Some(body) = body {
@@ -306,12 +310,12 @@ impl KalshiClient {
         if require_auth {
             let signer = self.signer.as_ref().ok_or(KalxError::MissingAuth)?;
             let timestamp = Utc::now().timestamp_millis().to_string();
-            for (key, value) in signer.auth_headers(&timestamp, &method, path)? {
+            for (key, value) in signer.auth_headers(&timestamp, &method, &signed_path)? {
                 request = request.header(key, value);
             }
         }
 
-        debug!(method = %method, path, query = ?query, auth = require_auth, "sending request");
+        debug!(method = %method, path, signed_path, query = ?query, auth = require_auth, "sending request");
         let response = request.send().await.context("request failed")?;
         let status = response.status();
         let body = response.text().await.context("failed to read response body")?;
