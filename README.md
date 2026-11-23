@@ -9,6 +9,11 @@ It is built for two modes at once:
 
 `kalx` is demo-first. Read commands are straightforward. Write commands default to dry-run previews unless you explicitly opt into live execution.
 
+## Nix and MCP
+
+The flake builds `kalx` and a separate, credential-free read-only `kalx-mcp` server.
+See [local MCP setup](docs/mcp.md) for Codex registration, Nix commands and smoke tests.
+
 ## Features
 
 - public market discovery: series, events, markets, trades, orderbooks, candles
