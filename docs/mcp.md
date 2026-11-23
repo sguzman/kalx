@@ -13,6 +13,12 @@ nom build
 ./result/bin/kalx-mcp
 ```
 
+The flake uses Crane to compile dependencies in a separate reusable Nix
+artifact. Cargo.lock remains unchanged and all builds use --locked.
+To build only the dependency artifact, run `nom build .#cargo-artifacts`.
+The package also supplies a CA bundle to the sandbox for its HTTP tests;
+normal runtime certificate verification remains enabled.
+
 The MCP binary waits for newline-delimited JSON-RPC on stdin. Ctrl+C or EOF
 stops it. The package includes both executables, and the flake also exposes
 `nix run .#mcp`, `nix develop`, and `nix flake check`.
