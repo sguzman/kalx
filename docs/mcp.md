@@ -8,16 +8,20 @@ tools. No TCP listener or public service is created.
 ## Nix on Linux
 
 ```fish
+nix develop --command crate2nix generate
+git add Cargo.nix
 nom build
 ./result/bin/kalx --help
 ./result/bin/kalx-mcp
 ```
 
-The flake uses Crane to compile dependencies in a separate reusable Nix
-artifact. Cargo.lock remains unchanged and all builds use --locked.
-To build only the dependency artifact, run `nom build .#cargo-artifacts`.
-The package also supplies a CA bundle to the sandbox for its HTTP tests;
-normal runtime certificate verification remains enabled.
+The flake uses crate2nix, not Crane. Each compiled Rust crate is a separate
+Nix derivation, eligible for reuse when its inputs match. The pinned
+Nixpkgs supplies both crate2nix and the compiler. Generate and check in
+Cargo.nix when Cargo.toml or Cargo.lock changes (also track crate-hashes.json
+if generated); ordinary Rust edits do not require regeneration. The initial
+metadata generation may download sources; package builds use the Nix graph.
+The test runner supplies a CA bundle without disabling TLS verification.
 
 The MCP binary waits for newline-delimited JSON-RPC on stdin. Ctrl+C or EOF
 stops it. The package includes both executables, and the flake also exposes
